@@ -12,21 +12,21 @@
 typedef NS_ENUM (int, EYSOUNDMANAGER_STATUS) {
     EYSOUNDMANAGER_STATUS_PLAYING,
     EYSOUNDMANAGER_STATUS_PAUSE,
+    EYSOUNDMANAGER_STATUS_FINISHED,
     EYSOUNDMANAGER_STATUS_STOPED,
     EYSOUNDMANAGER_STATUS_LOADING,
-    EYSOUNDMANAGER_STATUS_FINISHED,
-    EYSOUNDMANAGER_STATUS_ERROR,
+    EYSOUNDMANAGER_STATUS_FAILED,
 };
-typedef void (^progressBlock)(Float64 degree, Float64 elapsedTime, Float64 timeRemaining, NSError *error, EYSOUNDMANAGER_STATUS status);
+typedef void (^periodicBlock)(Float64 degree, Float64 elapsedTime, Float64 timeRemaining, NSError *error, EYSOUNDMANAGER_STATUS status);
 
 @interface EYSoundManager : NSObject
-+(EYSoundManager *)shareManager;
++(EYSoundManager *)sharedManager;
 @property (nonatomic, strong) AVAudioPlayer *audioPlayer;
 @property (nonatomic, strong) AVPlayer *player;
-@property (nonatomic, copy) progressBlock block;
+@property (nonatomic, copy) periodicBlock block;
 @property (nonatomic) EYSOUNDMANAGER_STATUS status;
 
--(void)startStreamingAudioWithURL:(NSString *)url andBlock:(progressBlock)block;
+-(void)startStreamingAudioWithURL:(NSString *)url usingBlock:(periodicBlock)block;
 -(void)pause;
 -(void)stop;
 -(void)replay;
