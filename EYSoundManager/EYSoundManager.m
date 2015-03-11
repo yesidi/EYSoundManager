@@ -20,7 +20,7 @@
     return eysoundManager;
 }
 
--(void)startStreamingAudioWithURL:(NSString *)url usingBlock:(periodicBlock)block
+-(void)startStreamingAudioWithURL:(NSString *)url tag:(NSString *)tag usingBlock:(periodicBlock)block
 {
     if (_block) {
         [self stop];
@@ -28,16 +28,19 @@
     
     _block = [block copy];
     NSURL *streamingURL = [NSURL URLWithString:url];
+    _currentStreamingURL = url;
+    _tag = tag;
     AVPlayerItem *playerItem = [AVPlayerItem playerItemWithURL:streamingURL];
     _player = [[AVPlayer alloc]initWithPlayerItem:playerItem];
     [_player play];
-    
     if (playerItem.status == AVPlayerItemStatusUnknown) {
         NSLog(@"AVPlayerItemStatusUnknown");
         _block(0.f, 0.f, 0.f, playerItem.error, EYSOUNDMANAGER_STATUS_LOADING);
     }else if(playerItem.status == AVPlayerItemStatusFailed) {
         NSLog(@"AVPlayerItemStatusFailed");
         _block(0.f, 0.f, 0.f, playerItem.error, EYSOUNDMANAGER_STATUS_FAILED);
+        _currentStreamingURL = nil;
+        _tag = nil;
     }
     
     [[NSNotificationCenter defaultCenter] addObserver:self
@@ -62,7 +65,7 @@
     [_player addPeriodicTimeObserverForInterval:CMTimeMakeWithSeconds(1, 1) queue:NULL usingBlock:^(CMTime time) {
         if (playerItem.status == AVPlayerItemStatusReadyToPlay) {
             void (^progressBlock)() = [block copy];
-            Float64 durationTime = CMTimeGetSeconds(playerItem.asset.duration);
+            Float64 durationTime = CMTimeGetSeconds(playerItem.duration);
             Float64 currentTime = (time.value/time.timescale);
             progressBlock(currentTime/durationTime, currentTime, durationTime - currentTime, playerItem.error, blockSelf->_status);
         }
@@ -77,16 +80,24 @@
             _status = EYSOUNDMANAGER_STATUS_PLAYING;
         }else if (playerItem.status==AVPlayerStatusFailed) {
             _status = EYSOUNDMANAGER_STATUS_FAILED;
+            _currentStreamingURL = nil;
+            _tag = nil;
         }else if (playerItem.status==AVPlayerStatusUnknown) {
             _status = EYSOUNDMANAGER_STATUS_LOADING;
+            _currentStreamingURL = nil;
+            _tag = nil;
         }
     }
 }
 
 -(void)didPlayToEndTime:(NSNotification *)sender
 {
-    [[NSNotificationCenter defaultCenter]removeObserver:self name:AVPlayerItemDidPlayToEndTimeNotification object:sender.object];
     _status = EYSOUNDMANAGER_STATUS_FINISHED;
+    _currentStreamingURL = nil;
+    _tag = nil;
+    Float64 durationTime = CMTimeGetSeconds([(AVPlayerItem *)[sender object] duration]);
+    _block(100.f, durationTime, 0.f, [(AVPlayerItem *)[sender object] error], _status);
+    [[NSNotificationCenter defaultCenter]removeObserver:self name:AVPlayerItemDidPlayToEndTimeNotification object:sender.object];
 }
 
 -(void)failedToPlayToEndTime:(NSNotification *)sender
@@ -94,6 +105,8 @@
     NSLog(@"failedToPlayToEndTime--%@", _player.currentItem.error.description);
     [[NSNotificationCenter defaultCenter]removeObserver:self name:AVPlayerItemFailedToPlayToEndTimeNotification object:sender.object];
     _status = EYSOUNDMANAGER_STATUS_FAILED;
+    _currentStreamingURL = nil;
+    _tag = nil;
 }
 
 -(void)playbackStalled:(NSNotification *)sender
@@ -112,6 +125,8 @@
 -(void)stop
 {
     _status = EYSOUNDMANAGER_STATUS_STOPED;
+    _currentStreamingURL = nil;
+    _tag = nil;
     [_player pause];
     _player = nil;
 }

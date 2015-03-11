@@ -20,13 +20,15 @@ typedef NS_ENUM (int, EYSOUNDMANAGER_STATUS) {
 typedef void (^periodicBlock)(Float64 degree, Float64 elapsedTime, Float64 timeRemaining, NSError *error, EYSOUNDMANAGER_STATUS status);
 
 @interface EYSoundManager : NSObject
-+(EYSoundManager *)sharedManager;
 @property (nonatomic, strong) AVAudioPlayer *audioPlayer;
 @property (nonatomic, strong) AVPlayer *player;
 @property (nonatomic, copy) periodicBlock block;
 @property (nonatomic) EYSOUNDMANAGER_STATUS status;
+@property (nonatomic, strong) NSString *currentStreamingURL;
+@property (nonatomic, strong) NSString *tag;
 
--(void)startStreamingAudioWithURL:(NSString *)url usingBlock:(periodicBlock)block;
++(EYSoundManager *)sharedManager;
+-(void)startStreamingAudioWithURL:(NSString *)url tag:(NSString *)tag usingBlock:(periodicBlock)block;
 -(void)pause;
 -(void)stop;
 -(void)replay;
