@@ -9,6 +9,8 @@
 #import "EYSoundManager.h"
 
 @implementation EYSoundManager
+@synthesize playObject;
+@synthesize soundDelegate;
 
 +(EYSoundManager *)sharedManager
 {
@@ -20,25 +22,121 @@
     return eysoundManager;
 }
 
+//处理监听触发事件
+-(void)sensorStateChange:(NSNotificationCenter *)notification;
+{
+    //如果此时手机靠近面部放在耳朵旁，那么声音将通过听筒输出，并将屏幕变暗
+    if ([[UIDevice currentDevice] proximityState] == YES)
+        [[AVAudioSession sharedInstance] setCategory:AVAudioSessionCategoryPlayAndRecord error:nil];
+    else [[AVAudioSession sharedInstance] setCategory:AVAudioSessionCategoryPlayback error:nil];
+}
+
+//播放本地资源
+-(void)startPlayingLocalAudioWithPath:(NSString *)url tag:(NSString *)tag usingBlock:(periodicBlock)block
+{
+    if (_block) {
+        [self stop];
+    }
+    [[UIDevice currentDevice] setProximityMonitoringEnabled:YES]; //建议在播放之前设置yes，播放结束设置NO，这个功能是开启红外感应
+    //添加监听
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(sensorStateChange:)
+                                                 name:@"UIDeviceProximityStateDidChangeNotification"
+                                               object:nil];
+    _block = [block copy];
+    _tag = tag;
+    
+    //初始化播放器的时候如下设置
+    AVAudioSession *audioSession = [AVAudioSession sharedInstance];
+    //默认情况下扬声器播放
+    [audioSession setCategory:AVAudioSessionCategoryPlayback error:nil];
+    [audioSession setActive:YES error:nil];
+    [audioSession overrideOutputAudioPort:AVAudioSessionPortOverrideSpeaker error:nil];
+    
+    AVPlayerItem *playerItem = [AVPlayerItem playerItemWithAsset:[AVAsset assetWithURL:[NSURL fileURLWithPath:url]]];
+    _player = [[AVPlayer alloc]initWithPlayerItem:playerItem];
+    [_player play];
+    if (playerItem.status == AVPlayerItemStatusUnknown) {
+        NSLog(@"AVPlayerItemStatusUnknown");
+        _block(0.f, 0.f, 0.f, playerItem.error, EYSOUND_AUDIO_STATUS_LOADING);
+        [self.soundDelegate EYSoundPlayingStreamUrlWithDegree:0.f elapsedTime:0.f timeRemaining:0.f error:playerItem.error status:EYSOUND_AUDIO_STATUS_LOADING];
+
+    }else if(playerItem.status == AVPlayerItemStatusFailed) {
+        NSLog(@"AVPlayerItemStatusFailed");
+        _block(0.f, 0.f, 0.f, playerItem.error, EYSOUND_AUDIO_STATUS_FAILED);
+        [self.soundDelegate EYSoundPlayingStreamUrlWithDegree:0.f elapsedTime:0.f timeRemaining:0.f error:playerItem.error status:EYSOUND_AUDIO_STATUS_FAILED];
+
+        _currentStreamingURL = nil;
+        _tag = nil;
+    }
+    
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(didPlayToEndTime:)
+                                                 name:AVPlayerItemDidPlayToEndTimeNotification
+                                               object:playerItem];
+    
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(failedToPlayToEndTime:)
+                                                 name:AVPlayerItemFailedToPlayToEndTimeNotification
+                                               object:playerItem];
+    
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(playbackStalled:)
+                                                 name:AVPlayerItemPlaybackStalledNotification
+                                               object:playerItem];
+    
+    [playerItem addObserver:self forKeyPath:@"status" options:NSKeyValueObservingOptionNew context:NULL];
+    
+    __block EYSoundManager *blockSelf = self;
+    
+    [_player addPeriodicTimeObserverForInterval:CMTimeMakeWithSeconds(1, 1) queue:NULL usingBlock:^(CMTime time) {
+        if (playerItem.status == AVPlayerItemStatusReadyToPlay) {
+            void (^progressBlock)() = [block copy];
+            Float64 durationTime = CMTimeGetSeconds(playerItem.duration);
+            Float64 currentTime = (time.value/time.timescale);
+            [blockSelf.soundDelegate EYSoundPlayingStreamUrlWithDegree:currentTime/durationTime elapsedTime:currentTime timeRemaining:durationTime - currentTime error:playerItem.error status:blockSelf->_status];
+            progressBlock(currentTime/durationTime, currentTime, durationTime - currentTime, playerItem.error, blockSelf->_status);
+        }
+    }];
+
+}
+
+//播放网络资源
 -(void)startStreamingAudioWithURL:(NSString *)url tag:(NSString *)tag usingBlock:(periodicBlock)block
 {
     if (_block) {
         [self stop];
     }
-    
+    [[UIDevice currentDevice] setProximityMonitoringEnabled:YES]; //建议在播放之前设置yes，播放结束设置NO，这个功能是开启红外感应
+    //添加监听
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(sensorStateChange:)
+                                                 name:@"UIDeviceProximityStateDidChangeNotification"
+                                               object:nil];
     _block = [block copy];
     NSURL *streamingURL = [NSURL URLWithString:url];
     _currentStreamingURL = url;
     _tag = tag;
+    
+    //初始化播放器的时候如下设置
+    AVAudioSession *audioSession = [AVAudioSession sharedInstance];
+    //默认情况下扬声器播放
+    [audioSession setCategory:AVAudioSessionCategoryPlayback error:nil];
+    [audioSession setActive:YES error:nil];
+    [audioSession overrideOutputAudioPort:AVAudioSessionPortOverrideSpeaker error:nil];
+    
     AVPlayerItem *playerItem = [AVPlayerItem playerItemWithURL:streamingURL];
     _player = [[AVPlayer alloc]initWithPlayerItem:playerItem];
     [_player play];
     if (playerItem.status == AVPlayerItemStatusUnknown) {
         NSLog(@"AVPlayerItemStatusUnknown");
         _block(0.f, 0.f, 0.f, playerItem.error, EYSOUND_AUDIO_STATUS_LOADING);
+        [self.soundDelegate EYSoundPlayingStreamUrlWithDegree:0.f elapsedTime:0.f timeRemaining:0.f error:playerItem.error status:EYSOUND_AUDIO_STATUS_LOADING];
+
     }else if(playerItem.status == AVPlayerItemStatusFailed) {
         NSLog(@"AVPlayerItemStatusFailed");
         _block(0.f, 0.f, 0.f, playerItem.error, EYSOUND_AUDIO_STATUS_FAILED);
+        [self.soundDelegate EYSoundPlayingStreamUrlWithDegree:0.f elapsedTime:0.f timeRemaining:0.f error:playerItem.error status:EYSOUND_AUDIO_STATUS_FAILED];
         _currentStreamingURL = nil;
         _tag = nil;
     }
@@ -62,11 +160,12 @@
     
     __block EYSoundManager *blockSelf = self;
 
-    [_player addPeriodicTimeObserverForInterval:CMTimeMakeWithSeconds(1, 1) queue:NULL usingBlock:^(CMTime time) {
+    [_player addPeriodicTimeObserverForInterval:CMTimeMakeWithSeconds(1.0, 1.0) queue:NULL usingBlock:^(CMTime time) {
         if (playerItem.status == AVPlayerItemStatusReadyToPlay) {
             void (^progressBlock)() = [block copy];
             Float64 durationTime = CMTimeGetSeconds(playerItem.duration);
             Float64 currentTime = (time.value/time.timescale);
+            [blockSelf.soundDelegate EYSoundPlayingStreamUrlWithDegree:currentTime/durationTime elapsedTime:currentTime timeRemaining:durationTime - currentTime error:playerItem.error status:blockSelf->_status];
             progressBlock(currentTime/durationTime, currentTime, durationTime - currentTime, playerItem.error, blockSelf->_status);
         }
     }];
@@ -94,10 +193,15 @@
 {
     _status = EYSOUND_AUDIO_STATUS_FINISHED;
     _currentStreamingURL = nil;
-    _tag = nil;
     Float64 durationTime = CMTimeGetSeconds([(AVPlayerItem *)[sender object] duration]);
     _block(100.f, durationTime, 0.f, [(AVPlayerItem *)[sender object] error], _status);
+    [self.soundDelegate EYSoundPlayingStreamUrlWithDegree:100.f elapsedTime:durationTime timeRemaining:0.f error:[(AVPlayerItem *)[sender object] error] status:_status];
+
+    _tag = nil;
+
     [[NSNotificationCenter defaultCenter]removeObserver:self name:AVPlayerItemDidPlayToEndTimeNotification object:sender.object];
+    [[NSNotificationCenter defaultCenter] removeObserver:self name:@"UIDeviceProximityStateDidChangeNotification" object:nil];
+    [[UIDevice currentDevice] setProximityMonitoringEnabled:NO]; //建议在播放之前设置yes，播放结束设置NO，这个功能是开启红外感应
 }
 
 -(void)failedToPlayToEndTime:(NSNotification *)sender
@@ -107,6 +211,9 @@
     _status = EYSOUND_AUDIO_STATUS_FAILED;
     _currentStreamingURL = nil;
     _tag = nil;
+    [[NSNotificationCenter defaultCenter] removeObserver:self name:@"UIDeviceProximityStateDidChangeNotification" object:nil];
+    [[UIDevice currentDevice] setProximityMonitoringEnabled:NO]; //建议在播放之前设置yes，播放结束设置NO，这个功能是开启红外感应
+
 }
 
 -(void)playbackStalled:(NSNotification *)sender
@@ -120,6 +227,9 @@
 {
     [_player pause];
     _status = EYSOUND_AUDIO_STATUS_PAUSE;
+    [[NSNotificationCenter defaultCenter] removeObserver:self name:@"UIDeviceProximityStateDidChangeNotification" object:nil];
+    [[UIDevice currentDevice] setProximityMonitoringEnabled:NO]; //建议在播放之前设置yes，播放结束设置NO，这个功能是开启红外感应
+
 }
 
 -(void)stop
@@ -129,6 +239,11 @@
     _tag = nil;
     [_player pause];
     _player = nil;
+    
+    //移除监听
+    [[NSNotificationCenter defaultCenter] removeObserver:self name:@"UIDeviceProximityStateDidChangeNotification" object:nil];
+    [[UIDevice currentDevice] setProximityMonitoringEnabled:NO]; //建议在播放之前设置yes，播放结束设置NO，这个功能是开启红外感应
+
 }
 
 -(void)play
@@ -145,10 +260,16 @@
 }
 
 //record method
--(void)startRecordingWithFileName:(NSString *)name andExtension:(NSString *)extension forDuration:(NSTimeInterval)second usingBlock:(recordBlock)block
+-(void)startRecordingWithFileName:(NSString *)name andExtension:(NSString *)extension forDuration:(NSTimeInterval)second prepare:(prepareBlock)prepareBlock usingBlock:(recordBlock)block micNotOpened:(micAuthorityBlock)micAuthorityBlock
 {
     if (_recorder.isRecording)
         [self cancelRecording];
+    
+    if (![self isAllowRecord]) {
+        micAuthorityBlock();
+        return;
+    }
+    prepareBlock();
     
     _eyRecordBlock = [block copy];
     self.displaylink = [CADisplayLink displayLinkWithTarget:self selector:@selector(updateMeters)];
@@ -163,8 +284,7 @@
     
     NSError *recorderError = nil;
     NSError *sessionError = nil;
-
-    _recorder = [[AVAudioRecorder alloc]initWithURL:[NSURL fileURLWithPath:[NSString stringWithFormat:@"%@/%@.%@", NSTemporaryDirectory(), name, extension]] settings:settings error:&recorderError];
+    _recorder = [[AVAudioRecorder alloc]initWithURL:[NSURL fileURLWithPath:[NSString stringWithFormat:@"%@%@.%@", NSTemporaryDirectory(), name, extension]] settings:settings error:&recorderError];
     _recorder.delegate = self;
 
     if (recorderError) {
@@ -199,6 +319,9 @@
         [self.displaylink setPaused:YES];
         _eyRecordBlock(_recorder.currentTime, [_recorder averagePowerForChannel:0], EYSOUND_RECORD_STATUS_PAUSE);
     }
+    [[NSNotificationCenter defaultCenter] removeObserver:self name:@"UIDeviceProximityStateDidChangeNotification" object:nil];
+    [[UIDevice currentDevice] setProximityMonitoringEnabled:NO]; //建议在播放之前设置yes，播放结束设置NO，这个功能是开启红外感应
+
 }
 
 -(void)resumeRecording {
@@ -207,6 +330,9 @@
         [self.displaylink setPaused:NO];
         _eyRecordBlock(_recorder.currentTime, [_recorder averagePowerForChannel:0], EYSOUND_RECORD_STATUS_RECORDING);
     }
+    [[NSNotificationCenter defaultCenter] removeObserver:self name:@"UIDeviceProximityStateDidChangeNotification" object:nil];
+    [[UIDevice currentDevice] setProximityMonitoringEnabled:NO]; //建议在播放之前设置yes，播放结束设置NO，这个功能是开启红外感应
+
 }
 
 -(void)stopAndSaveRecording {
@@ -214,6 +340,9 @@
     [self.displaylink setPaused:YES];
     [_recorder stop];
     _eyRecordBlock(_recorder.currentTime, [_recorder averagePowerForChannel:0], EYSOUND_RECORD_STATUS_STOP);
+    [[NSNotificationCenter defaultCenter] removeObserver:self name:@"UIDeviceProximityStateDidChangeNotification" object:nil];
+    [[UIDevice currentDevice] setProximityMonitoringEnabled:NO]; //建议在播放之前设置yes，播放结束设置NO，这个功能是开启红外感应
+
 }
 
 -(void)cancelRecording {
@@ -222,6 +351,9 @@
     [_recorder stop];
     [_recorder deleteRecording];
     _eyRecordBlock(_recorder.currentTime, [_recorder averagePowerForChannel:0], EYSOUND_RECORD_STATUS_STOP);
+    [[NSNotificationCenter defaultCenter] removeObserver:self name:@"UIDeviceProximityStateDidChangeNotification" object:nil];
+    [[UIDevice currentDevice] setProximityMonitoringEnabled:NO]; //建议在播放之前设置yes，播放结束设置NO，这个功能是开启红外感应
+
 }
 
 -(void)audioRecorderDidFinishRecording:(AVAudioRecorder *)recorder successfully:(BOOL)flag
@@ -231,6 +363,26 @@
         [self.displaylink setPaused:YES];
         _eyRecordBlock(recorder.currentTime, [_recorder averagePowerForChannel:0], EYSOUND_RECORD_STATUS_FINISHED);
     }
+    [[NSNotificationCenter defaultCenter] removeObserver:self name:@"UIDeviceProximityStateDidChangeNotification" object:nil];
+    [[UIDevice currentDevice] setProximityMonitoringEnabled:NO]; //建议在播放之前设置yes，播放结束设置NO，这个功能是开启红外感应
+
 }
 
+- (BOOL)isAllowRecord
+{
+    __block BOOL bCanRecord = YES;
+    if ([[[UIDevice currentDevice]systemVersion]floatValue] >= 7.0) {
+        AVAudioSession *audioSession = [AVAudioSession sharedInstance];
+        if ([audioSession respondsToSelector:@selector(requestRecordPermission:)]) {
+            [audioSession performSelector:@selector(requestRecordPermission:) withObject:^(BOOL granted) {
+                if (granted) {
+                    bCanRecord = YES;
+                } else {
+                    bCanRecord = NO;
+                }
+            }];
+        }
+    }
+    return bCanRecord;
+}
 @end
